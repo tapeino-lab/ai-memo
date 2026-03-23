@@ -6,14 +6,15 @@
     <title>AI Meeting Memo Pro</title>
     <style>
         body { font-family: sans-serif; padding: 20px; max-width: 600px; margin: auto; line-height: 1.6; }
-        #realtime-text { border: 1px solid #ccc; padding: 15px; height: 150px; overflow-y: auto; background: #f9f9f9; margin-bottom: 10px; white-space: pre-wrap; font-size: 0.9em; }
+        #realtime-text { border: 1px solid #ccc; padding: 15px; height: 150px; overflow-y: auto; background: #f9f9f9; margin-bottom: 10px; white-space: pre-wrap; font-size: 0.9em; border-radius: 5px; }
         .controls { margin-bottom: 20px; }
         textarea { width: 100%; height: 80px; margin-bottom: 10px; padding: 10px; box-sizing: border-box; border-radius: 4px; border: 1px solid #bbb; font-size: 16px; }
-        button { padding: 12px 24px; font-size: 16px; cursor: pointer; border-radius: 5px; border: none; font-weight: bold; -webkit-appearance: none; }
+        button { padding: 12px 24px; font-size: 16px; cursor: pointer; border-radius: 5px; border: none; font-weight: bold; -webkit-appearance: none; width: 100%; margin-bottom: 10px; }
         #startBtn { background-color: #4CAF50; color: white; }
-        #stopBtn { background-color: #f44336; color: white; margin-left: 10px; }
+        #stopBtn { background-color: #f44336; color: white; }
         button:disabled { background-color: #ccc; cursor: not-allowed; opacity: 0.6; }
-        #status-indicator { margin-top: 10px; font-weight: bold; color: #2196F3; min-height: 1.5em; }
+        #status-indicator { margin-top: 10px; font-weight: bold; color: #2196F3; min-height: 1.5em; text-align: center; }
+        .hint { font-size: 0.8em; color: #666; margin-top: 5px; }
     </style>
 </head>
 <body>
@@ -29,25 +30,33 @@
         <button id="startBtn">録音開始</button>
         <button id="stopBtn" disabled>停止・保存・AI解析</button>
     </div>
+    <p class="hint">※停止後、「送信完了」と出ればブラウザを閉じても大丈夫です。解析結果は1分ほどでドライブに生成されます。</p>
 
     <script>
         let recognition;
         let mediaRecorder;
         let audioChunks = [];
+        let isRecording = false;
 
         // 音声認識の初期化
-        if ('webkitSpeechRecognition' in window || 'speechRecognition' in window) {
-            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (SpeechRecognition) {
             recognition = new SpeechRecognition();
             recognition.continuous = true;
             recognition.interimResults = true;
             recognition.lang = 'ja-JP';
+            
             recognition.onresult = (e) => {
                 let transcript = '';
                 for (let i = e.resultIndex; i < e.results.length; i++) { 
                     transcript += e.results[i][0].transcript; 
                 }
                 document.getElementById('realtime-text').innerText = transcript;
+            };
+
+            // スマホでの途切れ対策：録音中に止まったら再起動
+            recognition.onend = () => {
+                if (isRecording) recognition.start();
             };
         }
 
@@ -56,12 +65,12 @@
         const status = document.getElementById('status-indicator');
         const promptInput = document.getElementById('promptInput');
 
-        // スマホ対策：クリックイベント内で直接getUserMediaを呼び出す
         startBtn.onclick = function() {
             status.innerText = "マイクを起動中...";
             
             navigator.mediaDevices.getUserMedia({ audio: true })
                 .then(stream => {
+                    isRecording = true;
                     audioChunks = [];
                     mediaRecorder = new MediaRecorder(stream);
                     
@@ -70,38 +79,40 @@
                     };
                     
                     mediaRecorder.onstop = () => {
-                        status.innerText = "音声送信準備中...";
+                        status.innerText = "音声送信中...";
                         const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
                         const reader = new FileReader();
                         reader.readAsDataURL(audioBlob);
                         reader.onloadend = () => {
                             const base64data = reader.result.split(',')[1];
-                            status.innerText = "AI解析中... (30秒〜1分ほどかかります)";
+                            status.innerText = "解析依頼を送信しました。そのままお待ちください...";
                             
                             const gasUrl = "https://script.google.com/macros/s/AKfycbzSYcDFaPcqesbMDgL9iGd_ngEnMmK2kfs22nmOof18D7m7pPVunyw38am3PTDqAk1nWA/exec";
                             
+                            // mode: 'no-cors' を使用してタイムアウトエラーを回避
                             fetch(gasUrl, {
                                 method: "POST",
+                                mode: 'no-cors',
                                 body: JSON.stringify({ 
                                     audio: base64data,
                                     prompt: promptInput.value 
                                 })
                             })
-                            .then(res => res.json())
-                            .then(data => {
-                                status.innerText = "完了！フォルダを確認してください。";
-                                alert("解析が完了しました！");
+                            .then(() => {
+                                // no-corsの場合、レスポンスの内容は見られませんが、
+                                // ここに来た時点で「送信自体」は完了しています
+                                status.innerText = "送信完了！1分ほどでドライブを確認してください。";
+                                alert("送信に成功しました。解析はバックグラウンドで進行します。");
                                 resetUI();
                             })
                             .catch(err => {
-                                status.innerText = "送信エラーが発生しました。";
-                                alert("エラー: " + err);
+                                status.innerText = "通信状況を確認してください。";
+                                alert("送信に失敗した可能性があります: " + err);
                                 resetUI();
                             });
                         };
                     };
 
-                    // 録音と認識を開始
                     mediaRecorder.start();
                     if (recognition) recognition.start();
                     
@@ -112,16 +123,16 @@
                 })
                 .catch(err => {
                     status.innerText = "エラー: マイクにアクセスできません。";
-                    alert("マイク起動失敗: " + err.name + "\n設定でマイクを許可してください。");
-                    console.error(err);
+                    alert("マイク起動失敗: " + err.name);
                 });
         };
 
         stopBtn.onclick = () => {
+            isRecording = false;
             if (recognition) recognition.stop();
             if (mediaRecorder) mediaRecorder.stop();
             stopBtn.disabled = true;
-            status.innerText = "停止処理中...";
+            status.innerText = "処理中...";
         };
 
         function resetUI() {
@@ -130,7 +141,7 @@
             promptInput.disabled = false;
             setTimeout(() => { 
                 if(status.innerText.includes("完了")) status.innerText = ""; 
-            }, 7000);
+            }, 10000);
         }
     </script>
 </body>
