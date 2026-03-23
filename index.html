@@ -3,87 +3,118 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI Meeting Memo</title>
+    <title>AI Meeting Memo Pro</title>
     <style>
-        body { font-family: sans-serif; padding: 20px; max-width: 600px; margin: auto; }
-        #realtime-text { border: 1px solid #ccc; padding: 15px; height: 200px; overflow-y: auto; background: #f9f9f9; margin-bottom: 20px; white-space: pre-wrap; }
-        button { padding: 10px 20px; font-size: 16px; cursor: pointer; border-radius: 5px; border: none; }
+        body { font-family: sans-serif; padding: 20px; max-width: 600px; margin: auto; line-height: 1.6; }
+        #realtime-text { border: 1px solid #ccc; padding: 15px; height: 150px; overflow-y: auto; background: #f9f9f9; margin-bottom: 10px; white-space: pre-wrap; font-size: 0.9em; }
+        .controls { margin-bottom: 20px; }
+        textarea { width: 100%; height: 80px; margin-bottom: 10px; padding: 10px; box-sizing: border-box; border-radius: 4px; border: 1px solid #bbb; }
+        button { padding: 12px 24px; font-size: 16px; cursor: pointer; border-radius: 5px; border: none; font-weight: bold; }
         #startBtn { background-color: #4CAF50; color: white; }
         #stopBtn { background-color: #f44336; color: white; margin-left: 10px; }
-        button:disabled { background-color: #ccc; cursor: not-allowed; }
+        button:disabled { background-color: #ccc; cursor: not-allowed; opacity: 0.6; }
+        #status-indicator { margin-top: 10px; font-weight: bold; color: #2196F3; min-height: 1.5em; }
     </style>
 </head>
 <body>
     <h2>AI Meeting Memo (Hybrid)</h2>
-    <div id="realtime-text">ここにリアルタイムの文字起こしが表示されます...</div>
     
-    <button id="startBtn">録音開始</button>
-    <button id="stopBtn" disabled>停止・保存</button>
+    <label for="promptInput">AIへの指示（プロンプト）:</label>
+    <textarea id="promptInput">この音声を要約してください。一人の話し手による講演か、または複数の聴衆を含む討議の形式です。文字起こしは最後に追加してください。</textarea>
+
+    <div id="realtime-text">リアルタイム文字起こしがここに表示されます...</div>
+    <div id="status-indicator"></div>
+    
+    <div class="controls">
+        <button id="startBtn">録音開始</button>
+        <button id="stopBtn" disabled>停止・保存・AI解析</button>
+    </div>
 
     <script>
         let recognition;
         let mediaRecorder;
         let audioChunks = [];
 
-        // 1. リアルタイム文字起こしの設定
         if ('webkitSpeechRecognition' in window) {
             recognition = new webkitSpeechRecognition();
             recognition.continuous = true;
             recognition.interimResults = true;
             recognition.lang = 'ja-JP';
-
-            recognition.onresult = (event) => {
+            recognition.onresult = (e) => {
                 let transcript = '';
-                for (let i = event.resultIndex; i < event.results.length; i++) {
-                    transcript += event.results[i][0].transcript;
-                }
+                for (let i = e.resultIndex; i < e.results.length; i++) { transcript += e.results[i][0].transcript; }
                 document.getElementById('realtime-text').innerText = transcript;
             };
         }
 
-        // 2. 録音と送信の処理
         const startBtn = document.getElementById('startBtn');
         const stopBtn = document.getElementById('stopBtn');
+        const status = document.getElementById('status-indicator');
+        const promptInput = document.getElementById('promptInput');
 
         startBtn.onclick = async () => {
             audioChunks = [];
-            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            mediaRecorder = new MediaRecorder(stream);
-            
-            mediaRecorder.ondataavailable = (e) => audioChunks.push(e.data);
-            
-            mediaRecorder.onstop = async () => {
-                const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
-                const reader = new FileReader();
-                reader.readAsDataURL(audioBlob);
-                reader.onloadend = () => {
-                    const base64data = reader.result.split(',')[1];
-                    
-                    // あなたのGAS URL
-                    const gasUrl = "https://script.google.com/macros/s/AKfycbzSYcDFaPcqesbMDgL9iGd_ngEnMmK2kfs22nmOof18D7m7pPVunyw38am3PTDqAk1nWA/exec";
-                    
-                    fetch(gasUrl, {
-                        method: "POST",
-                        mode: "no-cors", // セキュリティ制限回避用
-                        body: JSON.stringify({ audio: base64data })
-                    })
-                    .then(() => alert("録音データを送信しました！Googleドライブを確認してください。"))
-                    .catch(err => alert("送信エラー: " + err));
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                mediaRecorder = new MediaRecorder(stream);
+                mediaRecorder.ondataavailable = (e) => audioChunks.push(e.data);
+                
+                mediaRecorder.onstop = async () => {
+                    status.innerText = "音声処理中... (GASへ送信準備)";
+                    const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+                    const reader = new FileReader();
+                    reader.readAsDataURL(audioBlob);
+                    reader.onloadend = () => {
+                        const base64data = reader.result.split(',')[1];
+                        status.innerText = "AI解析中... しばらくお待ちください（約30秒〜1分）";
+                        
+                        const gasUrl = "https://script.google.com/macros/s/AKfycbzSYcDFaPcqesbMDgL9iGd_ngEnMmK2kfs22nmOof18D7m7pPVunyw38am3PTDqAk1nWA/exec";
+                        
+                        fetch(gasUrl, {
+                            method: "POST",
+                            body: JSON.stringify({ 
+                                audio: base64data,
+                                prompt: promptInput.value // ブラウザ上のプロンプトを送信
+                            })
+                        })
+                        .then(() => {
+                            status.innerText = "完了！フォルダを確認してください。";
+                            alert("解析が完了しました！");
+                            resetUI();
+                        })
+                        .catch(err => {
+                            status.innerText = "エラーが発生しました。";
+                            alert("送信エラー: " + err);
+                            resetUI();
+                        });
+                    };
                 };
-            };
 
-            recognition.start();
-            mediaRecorder.start();
-            startBtn.disabled = true;
-            stopBtn.disabled = false;
+                recognition.start();
+                mediaRecorder.start();
+                startBtn.disabled = true;
+                stopBtn.disabled = false;
+                promptInput.disabled = true;
+                status.innerText = "録音中...";
+            } catch (err) {
+                alert("マイクの起動に失敗しました: " + err);
+            }
         };
 
         stopBtn.onclick = () => {
             recognition.stop();
             mediaRecorder.stop();
+            stopBtn.disabled = true; // 二重押し防止
+            status.innerText = "停止しています...";
+        };
+
+        function resetUI() {
             startBtn.disabled = false;
             stopBtn.disabled = true;
-        };
+            promptInput.disabled = false;
+            // ステータス表示を一定時間後に消す
+            setTimeout(() => { if(status.innerText.includes("完了")) status.innerText = ""; }, 5000);
+        }
     </script>
 </body>
 </html>
