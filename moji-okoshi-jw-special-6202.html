@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Meeting Memo Pro</title>
+    <style>
+        body { font-family: sans-serif; padding: 20px; max-width: 600px; margin: auto; line-height: 1.6; }
+        #realtime-text { border: 1px solid #ccc; padding: 15px; height: 150px; overflow-y: auto; background: #f9f9f9; margin-bottom: 10px; white-space: pre-wrap; font-size: 0.9em; }
+        .controls { margin-bottom: 20px; }
+        textarea { width: 100%; height: 80px; margin-bottom: 10px; padding: 10px; box-sizing: border-box; border-radius: 4px; border: 1px solid #bbb; font-size: 16px; }
+        button { padding: 12px 24px; font-size: 16px; cursor: pointer; border-radius: 5px; border: none; font-weight: bold; -webkit-appearance: none; }
+        #startBtn { background-color: #4CAF50; color: white; }
+        #stopBtn { background-color: #f44336; color: white; margin-left: 10px; }
+        button:disabled { background-color: #ccc; cursor: not-allowed; opacity: 0.6; }
+        #status-indicator { margin-top: 10px; font-weight: bold; color: #2196F3; min-height: 1.5em; }
+    </style>
+</head>
+<body>
+    <h2>AI Meeting Memo (Hybrid)</h2>
+    
+    <label for="promptInput">AIへの指示（プロンプト）:</label>
+    <textarea id="promptInput">この音声を要約してください。一人の話し手による講演か、または複数の聴衆を含む討議の形式です。文字起こしは最後に追加してください。</textarea>
+
+    <div id="realtime-text">リアルタイム文字起こしがここに表示されます...</div>
+    <div id="status-indicator"></div>
+    
+    <div class="controls">
+        <button id="startBtn">録音開始</button>
+        <button id="stopBtn" disabled>停止・保存・AI解析</button>
+    </div>
+
+    <script>
+        let recognition;
+        let mediaRecorder;
+        let audioChunks = [];
+
+        // 音声認識の初期化
+        if ('webkitSpeechRecognition' in window || 'speechRecognition' in window) {
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            recognition = new SpeechRecognition();
+            recognition.continuous = true;
+            recognition.interimResults = true;
+            recognition.lang = 'ja-JP';
+            recognition.onresult = (e) => {
+                let transcript = '';
+                for (let i = e.resultIndex; i < e.results.length; i++) { 
+                    transcript += e.results[i][0].transcript; 
+                }
+                document.getElementById('realtime-text').innerText = transcript;
+            };
+        }
+
+        const startBtn = document.getElementById('startBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        const status = document.getElementById('status-indicator');
+        const promptInput = document.getElementById('promptInput');
+
+        // スマホ対策：クリックイベント内で直接getUserMediaを呼び出す
+        startBtn.onclick = function() {
+            status.innerText = "マイクを起動中...";
+            
+            navigator.mediaDevices.getUserMedia({ audio: true })
+                .then(stream => {
+                    audioChunks = [];
+                    mediaRecorder = new MediaRecorder(stream);
+                    
+                    mediaRecorder.ondataavailable = (e) => {
+                        if (e.data.size > 0) audioChunks.push(e.data);
+                    };
+                    
+                    mediaRecorder.onstop = () => {
+                        status.innerText = "音声送信準備中...";
+                        const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+                        const reader = new FileReader();
+                        reader.readAsDataURL(audioBlob);
+                        reader.onloadend = () => {
+                            const base64data = reader.result.split(',')[1];
+                            status.innerText = "AI解析中... (30秒〜1分ほどかかります)";
+                            
+                            const gasUrl = "https://script.google.com/macros/s/AKfycbzSYcDFaPcqesbMDgL9iGd_ngEnMmK2kfs22nmOof18D7m7pPVunyw38am3PTDqAk1nWA/exec";
+                            
+                            fetch(gasUrl, {
+                                method: "POST",
+                                body: JSON.stringify({ 
+                                    audio: base64data,
+                                    prompt: promptInput.value 
+                                })
+                            })
+                            .then(res => res.json())
+                            .then(data => {
+                                status.innerText = "完了！フォルダを確認してください。";
+                                alert("解析が完了しました！");
+                                resetUI();
+                            })
+                            .catch(err => {
+                                status.innerText = "送信エラーが発生しました。";
+                                alert("エラー: " + err);
+                                resetUI();
+                            });
+                        };
+                    };
+
+                    // 録音と認識を開始
+                    mediaRecorder.start();
+                    if (recognition) recognition.start();
+                    
+                    startBtn.disabled = true;
+                    stopBtn.disabled = false;
+                    promptInput.disabled = true;
+                    status.innerText = "録音中...";
+                })
+                .catch(err => {
+                    status.innerText = "エラー: マイクにアクセスできません。";
+                    alert("マイク起動失敗: " + err.name + "\n設定でマイクを許可してください。");
+                    console.error(err);
+                });
+        };
+
+        stopBtn.onclick = () => {
+            if (recognition) recognition.stop();
+            if (mediaRecorder) mediaRecorder.stop();
+            stopBtn.disabled = true;
+            status.innerText = "停止処理中...";
+        };
+
+        function resetUI() {
+            startBtn.disabled = false;
+            stopBtn.disabled = true;
+            promptInput.disabled = false;
+            setTimeout(() => { 
+                if(status.innerText.includes("完了")) status.innerText = ""; 
+            }, 7000);
+        }
+    </script>
+</body>
+</html>
