@@ -1,17 +1,89 @@
-mediaRecorder.onstop = async () => {
-  const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
-  const reader = new FileReader();
-  reader.readAsDataURL(audioBlob);
-  reader.onloadend = () => {
-    const base64data = reader.result.split(',')[1];
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Meeting Memo</title>
+    <style>
+        body { font-family: sans-serif; padding: 20px; max-width: 600px; margin: auto; }
+        #realtime-text { border: 1px solid #ccc; padding: 15px; height: 200px; overflow-y: auto; background: #f9f9f9; margin-bottom: 20px; white-space: pre-wrap; }
+        button { padding: 10px 20px; font-size: 16px; cursor: pointer; border-radius: 5px; border: none; }
+        #startBtn { background-color: #4CAF50; color: white; }
+        #stopBtn { background-color: #f44336; color: white; margin-left: 10px; }
+        button:disabled { background-color: #ccc; cursor: not-allowed; }
+    </style>
+</head>
+<body>
+    <h2>AI Meeting Memo (Hybrid)</h2>
+    <div id="realtime-text">ここにリアルタイムの文字起こしが表示されます...</div>
     
-    // GASのURLに送信
-    const gasUrl = "https://script.google.com/macros/s/AKfycbzSYcDFaPcqesbMDgL9iGd_ngEnMmK2kfs22nmOof18D7m7pPVunyw38am3PTDqAk1nWA/exec";
-    fetch(gasUrl, {
-      method: "POST",
-      body: JSON.stringify({ audio: base64data })
-    })
-    .then(res => res.json())
-    .then(data => alert("録音を保存しました！ID: " + data.fileId));
-  };
-};
+    <button id="startBtn">録音開始</button>
+    <button id="stopBtn" disabled>停止・保存</button>
+
+    <script>
+        let recognition;
+        let mediaRecorder;
+        let audioChunks = [];
+
+        // 1. リアルタイム文字起こしの設定
+        if ('webkitSpeechRecognition' in window) {
+            recognition = new webkitSpeechRecognition();
+            recognition.continuous = true;
+            recognition.interimResults = true;
+            recognition.lang = 'ja-JP';
+
+            recognition.onresult = (event) => {
+                let transcript = '';
+                for (let i = event.resultIndex; i < event.results.length; i++) {
+                    transcript += event.results[i][0].transcript;
+                }
+                document.getElementById('realtime-text').innerText = transcript;
+            };
+        }
+
+        // 2. 録音と送信の処理
+        const startBtn = document.getElementById('startBtn');
+        const stopBtn = document.getElementById('stopBtn');
+
+        startBtn.onclick = async () => {
+            audioChunks = [];
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            mediaRecorder = new MediaRecorder(stream);
+            
+            mediaRecorder.ondataavailable = (e) => audioChunks.push(e.data);
+            
+            mediaRecorder.onstop = async () => {
+                const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+                const reader = new FileReader();
+                reader.readAsDataURL(audioBlob);
+                reader.onloadend = () => {
+                    const base64data = reader.result.split(',')[1];
+                    
+                    // あなたのGAS URL
+                    const gasUrl = "https://script.google.com/macros/s/AKfycbzSYcDFaPcqesbMDgL9iGd_ngEnMmK2kfs22nmOof18D7m7pPVunyw38am3PTDqAk1nWA/exec";
+                    
+                    fetch(gasUrl, {
+                        method: "POST",
+                        mode: "no-cors", // セキュリティ制限回避用
+                        body: JSON.stringify({ audio: base64data })
+                    })
+                    .then(() => alert("録音データを送信しました！Googleドライブを確認してください。"))
+                    .catch(err => alert("送信エラー: " + err));
+                };
+            };
+
+            recognition.start();
+            mediaRecorder.start();
+            startBtn.disabled = true;
+            stopBtn.disabled = false;
+        };
+
+        stopBtn.onclick = () => {
+            recognition.stop();
+            mediaRecorder.stop();
+            startBtn.disabled = false;
+            stopBtn.disabled = true;
+        };
+    </script>
+</body>
+</html>
