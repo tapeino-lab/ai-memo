@@ -1,0 +1,17 @@
+mediaRecorder.onstop = async () => {
+  const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+  const reader = new FileReader();
+  reader.readAsDataURL(audioBlob);
+  reader.onloadend = () => {
+    const base64data = reader.result.split(',')[1];
+    
+    // GASのURLに送信
+    const gasUrl = "https://script.google.com/macros/s/AKfycbzSYcDFaPcqesbMDgL9iGd_ngEnMmK2kfs22nmOof18D7m7pPVunyw38am3PTDqAk1nWA/exec";
+    fetch(gasUrl, {
+      method: "POST",
+      body: JSON.stringify({ audio: base64data })
+    })
+    .then(res => res.json())
+    .then(data => alert("録音を保存しました！ID: " + data.fileId));
+  };
+};
